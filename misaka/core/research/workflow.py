@@ -1645,8 +1645,15 @@ async def _expand_owned(con, cfg, runner, worker, run, node, *, context, tool_ca
                     await runner.continue_card(red["id"], _red_team_brief(con, run, node, version, red["assignee"]),
                                                expected_generation=int(request["from_generation"]))
                 except (ValueError, RuntimeError, OSError) as error:
+                    # Prevent infinite retries on persistent failures (issue #13).
+                    key = (red["id"], version)
+                    if not hasattr(runner, "_continue_failures"):
+                        runner._continue_failures = {}
+                    runner._continue_failures[key] = runner._continue_failures.get(key, 0) + 1
+                    if runner._continue_failures[key] >= 10:
+                        raise RuntimeError(f"Card {red['id']} could not be continued after 10 attempts: {error}") from error
                     await _progress(progress, "red_team", f"Sister {red['assignee']}'s card could not be continued "
-                                    f"yet ({error}); trying again.", run)
+                                    f"yet ({error}); trying again (attempt {runner._continue_failures[key]}/10).", run)
                     await asyncio.sleep(poll_seconds)
                     continue
             outcome = await drive("red_team")
